@@ -40,6 +40,32 @@ except Exception as exc:
 def home():
     return render_template('home.html')
 
+def build_input_dataframe(data):
+    values = [float(data.get(feature['name'], 0)) for feature in FEATURES]
+    return pd.DataFrame([values], columns=[feature['name'] for feature in FEATURES])
+
+
+def compute_risk_scores(X_scaled):
+    if model is None or scaler is None:
+        raise RuntimeError(load_error or "Prediction assets are missing.")
+
+    if not hasattr(model, 'predict_proba'):
+        raise RuntimeError('Loaded model does not support probability estimates.')
+
+    probability = float(model.predict_proba(X_scaled)[0][1]) * 100
+    risk_score = round(probability, 2)
+    safe_score = round(100 - probability, 2)
+
+    if risk_score >= 70:
+        status = "High risk"
+    elif risk_score >= 40:
+        status = "Moderate risk"
+    else:
+        status = "Safe"
+
+    return risk_score, safe_score, status
+
+
 @app.route('/api/predict', methods=['POST'])
 def api_predict():
     if model is None or scaler is None:
@@ -50,20 +76,9 @@ def api_predict():
         data = request.form.to_dict()
 
     try:
-        values = [float(data.get(feature['name'], 0)) for feature in FEATURES]
-        X = pd.DataFrame([values], columns=[feature['name'] for feature in FEATURES])
+        X = build_input_dataframe(data)
         X_scaled = scaler.transform(X)
-        prediction = model.predict(X_scaled)[0]
-        probability = float(model.predict_proba(X_scaled)[0][1]) * 100
-        risk_score = round(probability, 2)
-        safe_score = round(100 - probability, 2)
-
-        if risk_score >= 70:
-            status = "High risk"
-        elif risk_score >= 40:
-            status = "Moderate risk"
-        else:
-            status = "Safe"
+        risk_score, safe_score, status = compute_risk_scores(X_scaled)
 
         return jsonify({
             "risk": risk_score,
@@ -73,6 +88,28 @@ def api_predict():
         })
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/predict', methods=['GET', 'POST'])
+def predict():
+    if request.method == 'GET':
+        return render_template('index.html', features=FEATURES)
+
+    if model is None or scaler is None:
+        return render_template('index.html', features=FEATURES, error=load_error or 'Prediction assets are missing.')
+
+    try:
+        data = request.form.to_dict()
+        X = build_input_dataframe(data)
+        X_scaled = scaler.transform(X)
+        risk_score, safe_score, status = compute_risk_scores(X_scaled)
+
+        if risk_score >= 70:
+            return render_template('chance.html', risk=risk_score)
+        return render_template('no_chance.html', safety=safe_score)
+    except Exception as exc:
+        return render_template('index.html', features=FEATURES, error=str(exc))
+
 
 if __name__ == '__main__':
     app.run(debug=True)
